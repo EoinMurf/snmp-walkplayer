@@ -25,15 +25,33 @@ except ImportError:
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-AGENT_CONF       = "/opt/datadog-agent/etc/conf.d/snmp.d/conf.yaml"
-AGENT_BIN        = "/opt/datadog-agent/bin/agent/agent"
-DEFAULT_PROFILES = "/opt/datadog-agent/etc/conf.d/snmp.d/default_profiles"
-USER_PROFILES    = "/opt/datadog-agent/etc/conf.d/snmp.d/profiles"
+def _find_agent_root():
+    """Return the Datadog agent root directory, checking common install paths."""
+    candidates = [
+        "/opt/datadog-agent",          # macOS (pkg install)
+        "/etc/datadog-agent",          # Linux (apt/yum install)
+        "/usr/local/datadog-agent",    # some Linux installs
+    ]
+    for path in candidates:
+        if os.path.isdir(path):
+            return path
+    return None
+
+_AGENT_ROOT = _find_agent_root()
+
+# These can be overridden via env vars for custom installs
+AGENT_CONF       = os.environ.get("DD_SNMP_CONF",
+    os.path.join(_AGENT_ROOT, "etc/conf.d/snmp.d/conf.yaml") if _AGENT_ROOT else "")
+DEFAULT_PROFILES = os.environ.get("DD_DEFAULT_PROFILES",
+    os.path.join(_AGENT_ROOT, "etc/conf.d/snmp.d/default_profiles") if _AGENT_ROOT else "")
+USER_PROFILES    = os.environ.get("DD_USER_PROFILES",
+    os.path.join(_AGENT_ROOT, "etc/conf.d/snmp.d/profiles") if _AGENT_ROOT else "")
+
 WALK_DIR         = os.path.expanduser("~/snmpsim-walkdata")
 WALK_FILE        = os.path.join(WALK_DIR, "public.snmprec")
-SNMP_PORT        = 1162   # native snmpsim — no Docker UDP forwarding issues
-SNMPSIM_BIN      = "snmpsim-command-responder"  # installed via pip3 install snmpsim-lextudio
-PORT             = 7374
+SNMP_PORT        = int(os.environ.get("SNMP_PORT", "1162"))
+SNMPSIM_BIN      = "snmpsim-command-responder"  # installed via pip install snmpsim-lextudio
+PORT             = int(os.environ.get("PORT", "7374"))
 
 # ── snmpwalk parser ────────────────────────────────────────────────────────────
 
@@ -191,10 +209,15 @@ def write_agent_conf(profile_name):
         return r.returncode == 0
 
 def restart_agent():
-    uid = subprocess.run(["id", "-u"], capture_output=True, text=True).stdout.strip()
-    r = subprocess.run(
-        ["launchctl", "kickstart", "-k", f"gui/{uid}/com.datadoghq.agent"],
-        capture_output=True)
+    import platform
+    if platform.system() == "Darwin":
+        uid = subprocess.run(["id", "-u"], capture_output=True, text=True).stdout.strip()
+        r = subprocess.run(
+            ["launchctl", "kickstart", "-k", f"gui/{uid}/com.datadoghq.agent"],
+            capture_output=True)
+    else:
+        r = subprocess.run(["sudo", "systemctl", "restart", "datadog-agent"],
+                           capture_output=True)
     time.sleep(2)
     return r.returncode == 0
 
@@ -292,16 +315,21 @@ def run_simulation():
             log(f"  ✓ snmpsim on 127.0.0.1:{SNMP_PORT}/udp  (community: public)", "ok")
 
             log("Updating Datadog Agent config…")
-            if profile:
+            if not AGENT_CONF:
+                log("  ! Datadog Agent not found — skipping conf.yaml update", "warn")
+                log("  ! Set DD_SNMP_CONF env var to your snmp.d/conf.yaml path", "warn")
+            elif profile:
                 if write_agent_conf(profile):
                     log(f"  ✓ Profile: {profile}", "ok")
                 else:
-                    log("  ! Could not write conf.yaml — check sudo permissions", "warn")
+                    log("  ! Could not write conf.yaml — check permissions", "warn")
             else:
                 log("  ! No matching profile found — update conf.yaml manually", "warn")
 
             log("Restarting Datadog Agent…")
-            if restart_agent():
+            if not AGENT_CONF:
+                log("  ! Skipping — no agent found", "warn")
+            elif restart_agent():
                 log("  ✓ Agent restarted", "ok")
             else:
                 log("  ! Agent restart failed — restart manually", "warn")
