@@ -11,7 +11,7 @@ A lightweight web app that turns a customer's `snmpwalk` output into a live simu
 5. **Updates the Datadog Agent** — writes `conf.yaml` with the matched profile and restarts the agent
 6. **Metrics flow into Datadog** — within ~1 minute, real customer metrics appear in NDM
 
-![screenshot placeholder](docs/screenshot.png)
+https://datadoghq.dev/integrations-core/tutorials/snmp/sim-format/
 
 ## Prerequisites
 
@@ -91,3 +91,5 @@ The SNMP simulator runs independently. You can point any SNMP poller at `127.0.0
 ```bash
 snmpwalk -v2c -c public 127.0.0.1:1162 .
 ```
+
+
